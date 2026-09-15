@@ -16,7 +16,6 @@
  * React route here paints the full app shell in the popup. The opener lives in
  * `client.ts` (`signIn` → `openSignInPopup`).
  */
-import { isSocialProviderId } from "./providers";
 import { auth, SESSION_TOKEN_COOKIE } from "./server";
 
 /** Message shape the popup posts to the opener (must match `client.ts`). */
@@ -63,23 +62,17 @@ export async function handleAuthPopupRequest(request: Request): Promise<Response
   // Stay first-party for the callback so the session cookie lands in THIS popup.
   const back = `${url.origin}/auth/popup?done=1`;
   try {
-    // A provider that goes straight to its upstream is a Better Auth SOCIAL
-    // provider; the brokered ones are `genericOAuth`. Same two call shapes the
-    // browser picks between in `client.ts`.
-    const errorCallbackURL = `${back}&error=1`;
-    const apiRes = isSocialProviderId(providerId)
-      ? await auth.api.signInSocial({
-          body: { provider: providerId as "twitter", callbackURL: back, errorCallbackURL },
-          headers: request.headers,
-          asResponse: true,
-        })
-      : await auth.api.signInWithOAuth2({
-          body: { providerId, callbackURL: back, errorCallbackURL },
-          // Forward the preview host so Better Auth derives the correct baseURL
-          // / redirect_uri for the dynamic `*.grok-sandbox.com` origin.
-          headers: request.headers,
-          asResponse: true,
-        });
+    const apiRes = await auth.api.signInWithOAuth2({
+      body: {
+        providerId,
+        callbackURL: back,
+        errorCallbackURL: `${back}&error=1`,
+      },
+      // Forward the preview host so Better Auth derives the correct baseURL /
+      // redirect_uri for the dynamic `*.grok-sandbox.com` origin.
+      headers: request.headers,
+      asResponse: true,
+    });
 
     if (!apiRes.ok) {
       const detail = await apiRes.text().catch(() => "");

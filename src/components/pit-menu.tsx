@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
-import { authEnabled, signOut } from "@/lib/auth/client";
-import { useConnectX } from "@/lib/auth/connect";
+import { privyEnabled } from "@/lib/auth/privy";
+import {
+  useConnectWalletAddress,
+  useConnectX,
+  useSignOut,
+} from "@/lib/auth/connect";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { useSyncExternalStore } from "react";
@@ -103,6 +107,13 @@ function WalletBlock({
     setValue(hunter.walletAddress ?? "");
   }, [hunter.walletAddress]);
 
+  // Linking through Privy just fills the field — the address still goes through
+  // `submitWallet`, which derives the chain and enforces one wallet per hunter.
+  const connectWallet = useConnectWalletAddress((address) => {
+    setValue(address);
+    onSave(address);
+  });
+
   return (
     <form
       className="space-y-2"
@@ -128,6 +139,17 @@ function WalletBlock({
           "Save wallet"
         )}
       </Button>
+      {privyEnabled ? (
+        <Button
+          type="button"
+          block
+          variant="outline"
+          disabled={busy}
+          onClick={connectWallet}
+        >
+          Connect wallet
+        </Button>
+      ) : null}
       {hunter.walletChain ? (
         <p className="font-mono text-xs text-subtle">
           {hunter.walletChain === "evm" ? "EVM" : "Solana"} locked · +150 XP
@@ -152,6 +174,7 @@ function SignedInMenu({
 }) {
   const { user } = useCurrentUserState();
   const [signingOut, setSigningOut] = useState(false);
+  const signOut = useSignOut();
   const gateSession = useSyncExternalStore(
     subscribeToNothing,
     hasGateSessionMarker,
@@ -240,7 +263,7 @@ function SignedInMenu({
         </a>
       </section>
 
-      {authEnabled && !gateSession && user ? (
+      {privyEnabled && !gateSession && user ? (
         <button
           type="button"
           disabled={signingOut}

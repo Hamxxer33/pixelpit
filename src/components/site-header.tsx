@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { useState, useSyncExternalStore } from "react";
-import { authEnabled, signOut } from "@/lib/auth/client";
-import { useConnectX } from "@/lib/auth/connect";
+import { privyEnabled } from "@/lib/auth/privy";
+import { useConnectX, useSignOut } from "@/lib/auth/connect";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
-import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import { hadPreviousSession, useCurrentUserState } from "@/lib/auth/use-current-user";
 import { XLogo } from "@/components/brand-icons";
 import { MenuButton } from "@/components/pit-menu";
 import { APP_NAME, SOCIALS, TICKER } from "@/lib/pixelpit";
@@ -47,13 +47,10 @@ function EnterChip() {
   );
 }
 
-function AccountChip({
-  sessionUser,
-}: {
-  sessionUser: { id: string; email: string | null } | null;
-}) {
+function AccountChip() {
   const { user, isPending } = useCurrentUserState();
   const [signingOut, setSigningOut] = useState(false);
+  const signOut = useSignOut();
   const gateSession = useSyncExternalStore(
     subscribeToNothing,
     hasGateSessionMarker,
@@ -82,7 +79,7 @@ function AccountChip({
         <span className="hidden max-w-[7rem] truncate font-mono text-xs tracking-[0.12em] uppercase sm:inline">
           {label}
         </span>
-        {authEnabled && !gateSession && (
+        {privyEnabled && !gateSession && (
           <button
             type="button"
             disabled={signingOut}
@@ -99,18 +96,14 @@ function AccountChip({
     );
   }
 
-  if (isPending && sessionUser) {
+  if (isPending && hadPreviousSession()) {
     return <div className="h-8 w-24 animate-pulse bg-surface-2" aria-hidden />;
   }
 
   return <EnterChip />;
 }
 
-export function SiteHeader({
-  sessionUser,
-}: {
-  sessionUser: { id: string; email: string | null } | null;
-}) {
+export function SiteHeader() {
   return (
     <header className="pit-rim sticky top-0 z-20">
       <div className="flex h-11 items-stretch">
@@ -124,7 +117,7 @@ export function SiteHeader({
         </Link>
         <Tape />
         <div className="flex items-center pr-2 sm:pr-3">
-          <AccountChip sessionUser={sessionUser} />
+          <AccountChip />
         </div>
       </div>
     </header>

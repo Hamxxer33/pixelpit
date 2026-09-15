@@ -27,11 +27,15 @@ import { createMiddleware } from "@tanstack/react-start";
  */
 export const authMiddleware = createMiddleware({ type: "function" })
   .client(async ({ next }) => {
-    // Live preview (partitioned iframe): the session rides a bearer token, not a
-    // cookie, so forward it to the server. Null when deployed (cookie auth), so
-    // this is a no-op there.
+    // Privy keeps the session in the browser and hands out a short-lived access
+    // token, so EVERY call forwards one — there is no cookie to ride along.
+    // `getPrivyAccessToken` refreshes it when it is close to expiring.
+    // Falls back to the Better Auth preview bearer when Privy is not configured.
+    const { getPrivyAccessToken } = await import("./privy-token");
     const { getBearerToken } = await import("./client");
-    return next({ sendContext: { bearerToken: getBearerToken() ?? undefined } });
+    const bearerToken =
+      (await getPrivyAccessToken()) ?? getBearerToken() ?? undefined;
+    return next({ sendContext: { bearerToken } });
   })
   .server(async ({ next, context }) => {
     // ONLY import `*.server` modules here. This file is dual client/server
