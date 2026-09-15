@@ -7,7 +7,7 @@ import {
   sameHandle,
   tickerPattern,
 } from "@/lib/pixelpit";
-import { getXBearer, hasXCredentials } from "@/lib/x-auth.server";
+import { getXBearer, hasXCredentials, xCredentialSummary } from "@/lib/x-auth.server";
 
 export type FetchedTweet = {
   id: string;
@@ -101,9 +101,7 @@ export async function fetchTweet(id: string, url: string): Promise<FetchedTweet>
   } catch {
     /* both failed */
   }
-  throw new Error(
-    "Couldn't read that post. Make sure it's public and try again.",
-  );
+  throw new Error("Couldn't read that post. Make sure it's public and try again.");
 }
 
 function keepTweet(tweet: FetchedTweet, hunterHandles: Set<string>): boolean {
@@ -111,10 +109,7 @@ function keepTweet(tweet: FetchedTweet, hunterHandles: Set<string>): boolean {
   if (mentionPattern(SOCIALS.xHandle).test(tweet.text)) return true;
   if (new RegExp(APP_NAME, "i").test(tweet.text)) return true;
   if (sameHandle(tweet.handle, SOCIALS.xHandle)) return true;
-  if (
-    hunterHandles.has(tweet.handle.toLowerCase()) &&
-    tickerPattern().test(tweet.text)
-  ) {
+  if (hunterHandles.has(tweet.handle.toLowerCase()) && tickerPattern().test(tweet.text)) {
     return true;
   }
   return false;
@@ -149,8 +144,7 @@ async function fromSyndication(handle: string): Promise<FetchedTweet[]> {
     {
       headers: {
         accept: "text/html",
-        "user-agent":
-          "Mozilla/5.0 (compatible; PIXELPIT/1.0; +https://x.com/pixellPIT)",
+        "user-agent": "Mozilla/5.0 (compatible; PIXELPIT/1.0; +https://x.com/pixellPIT)",
       },
       signal: AbortSignal.timeout(12000),
     },
@@ -174,16 +168,13 @@ async function fromSyndication(handle: string): Promise<FetchedTweet[]> {
     const tweet = entry.content?.tweet;
     const id = tweet?.id_str?.trim();
     const text = (tweet?.full_text ?? tweet?.text ?? "").trim();
-    const author =
-      tweet?.user?.screen_name?.replace(/^@/, "").trim() || safe;
+    const author = tweet?.user?.screen_name?.replace(/^@/, "").trim() || safe;
     if (!id || !text) continue;
     tweets.push({
       id,
       text,
       handle: author,
-      isReply: Boolean(
-        tweet?.in_reply_to_status_id_str || tweet?.in_reply_to_user_id_str,
-      ),
+      isReply: Boolean(tweet?.in_reply_to_status_id_str || tweet?.in_reply_to_user_id_str),
       createdAt: tweet?.created_at,
     });
   }
@@ -201,24 +192,54 @@ type ApiTweet = {
 
 type ApiUser = { id: string; username: string };
 
+/**
+ * A GET against the X API, returning `null` on any failure.
+ *
+ * The failure is LOGGED rather than swallowed, because the status is the whole
+ * diagnosis and the caller cannot see it: 401 is a bad bearer, 403 usually
+ * means the plan does not include this endpoint (`/2/tweets/search/recent`
+ * needs Basic or above — it is not on the Free tier), and 429 is a rate limit.
+ * Without this line the app silently falls through to scraping and looks like
+ * "the X API is not pulling" with nothing to point at.
+ */
 async function xGet<T>(path: string): Promise<T | null> {
   const token = await getXBearer();
-  if (!token) return null;
-  const res = await fetch(`https://api.twitter.com${path}`, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: "application/json",
-    },
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!res.ok) return null;
+  if (!token) {
+    console.error(`[x-api] no bearer for ${endpointName(path)} — ${xCredentialSummary()}`);
+    return null;
+  }
+  let res: Response;
+  try {
+    res = await fetch(`https://api.twitter.com${path}`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: "application/json",
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch (err) {
+    console.error(
+      `[x-api] ${endpointName(path)} threw: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    console.error(
+      `[x-api] ${endpointName(path)} -> ${res.status} ${res.statusText} ${detail.slice(0, 300)}`,
+    );
+    return null;
+  }
   return (await res.json()) as T;
 }
 
+/** The endpoint path without its query string — safe to log, no handles or tokens. */
+function endpointName(path: string): string {
+  return path.split("?", 1)[0];
+}
+
 async function fromSearch(): Promise<FetchedTweet[]> {
-  const query = encodeURIComponent(
-    `(@${SOCIALS.xHandle} OR ${APP_NAME} OR ${TICKER}) -is:retweet`,
-  );
+  const query = encodeURIComponent(`(@${SOCIALS.xHandle} OR ${APP_NAME} OR ${TICKER}) -is:retweet`);
   const payload = await xGet<{
     data?: ApiTweet[];
     includes?: { users?: ApiUser[] };
@@ -226,9 +247,7 @@ async function fromSearch(): Promise<FetchedTweet[]> {
     `/2/tweets/search/recent?query=${query}&max_results=100&tweet.fields=created_at,in_reply_to_user_id,author_id,conversation_id,text&expansions=author_id&user.fields=username`,
   );
   if (!payload?.data?.length) return [];
-  const users = new Map(
-    (payload.includes?.users ?? []).map((user) => [user.id, user.username]),
-  );
+  const users = new Map((payload.includes?.users ?? []).map((user) => [user.id, user.username]));
   const out: FetchedTweet[] = [];
   for (const tweet of payload.data) {
     const handle = tweet.author_id ? users.get(tweet.author_id) : undefined;
@@ -282,36 +301,60 @@ export async function collectPitTweets(
   ).slice(0, 12);
 
   const buckets: FetchedTweet[][] = [];
-  let source = "profile";
   const hunterSet = new Set(unique.map((handle) => handle.toLowerCase()));
+  // Counted per source so the recorded `source` reflects where the posts ACTUALLY
+  // came from. It previously defaulted to "profile" and stayed there even when
+  // every post had come from the syndication scrape, which made a completely
+  // dead X API look like a working one.
+  let searchCount = 0;
+  let apiProfileCount = 0;
+  let syndicationCount = 0;
 
-  if (await getXBearer()) {
+  const bearer = await getXBearer();
+  if (bearer) {
     try {
       const searched = await fromSearch();
-      if (searched.length > 0) {
-        buckets.push(searched);
-        source = "search";
-      }
-    } catch {
-      /* fall through */
+      searchCount = searched.length;
+      if (searched.length > 0) buckets.push(searched);
+    } catch (err) {
+      console.error(`[x-api] search threw: ${err instanceof Error ? err.message : String(err)}`);
     }
     const apiProfiles = await Promise.all(
       unique.map((handle) => fromApiUser(handle).catch(() => [] as FetchedTweet[])),
     );
+    apiProfileCount = apiProfiles.flat().length;
     buckets.push(...apiProfiles);
+  } else {
+    console.error(`[x-api] skipping API entirely — ${xCredentialSummary()}`);
   }
 
   if (buckets.flat().length === 0) {
     const syn = await Promise.all(
-      unique.map((handle) =>
-        fromSyndication(handle).catch(() => [] as FetchedTweet[]),
-      ),
+      unique.map((handle) => fromSyndication(handle).catch(() => [] as FetchedTweet[])),
     );
+    syndicationCount = syn.flat().length;
     buckets.push(...syn);
   }
 
-  const tweets = dedupe(buckets.flat()).filter((tweet) =>
-    keepTweet(tweet, hunterSet),
+  const collected = dedupe(buckets.flat());
+  const tweets = collected.filter((tweet) => keepTweet(tweet, hunterSet));
+  const source =
+    searchCount > 0
+      ? "search"
+      : apiProfileCount > 0
+        ? "api-profile"
+        : syndicationCount > 0
+          ? "syndication"
+          : "none";
+
+  // One line per scan: where the posts came from, and how many survived the
+  // relevance filter. `source: syndication` means the X API returned nothing
+  // and this is scraped data — check the [x-api] lines above it for why.
+  console.info(
+    `[x-api] scan source=${source} handles=${unique.length} ` +
+      `search=${searchCount} apiProfile=${apiProfileCount} syndication=${syndicationCount} ` +
+      `collected=${collected.length} kept=${tweets.length}`,
   );
+
   return { tweets, source };
 }
