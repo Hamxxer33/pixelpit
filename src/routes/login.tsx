@@ -1,5 +1,6 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
-import { GROK_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
+import { GROK_PROVIDERS, authEnabled } from "@/lib/auth/client";
+import { connectProvider } from "@/lib/auth/connect";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { PixelMark } from "@/components/pixel-art";
 import { Button } from "@/components/ui/button";
@@ -42,9 +43,7 @@ function Login() {
                 <Button
                   block
                   size="lg"
-                  onClick={() =>
-                    signIn(xProvider.providerId, { callbackURL: "/" })
-                  }
+                  onClick={() => connectProvider(xProvider.providerId)}
                 >
                   <XLogo />
                   Continue with X
@@ -55,9 +54,7 @@ function Login() {
                   key={provider.providerId}
                   block
                   variant="outline"
-                  onClick={() =>
-                    signIn(provider.providerId, { callbackURL: "/" })
-                  }
+                  onClick={() => connectProvider(provider.providerId)}
                 >
                   Continue with {provider.label}
                 </Button>

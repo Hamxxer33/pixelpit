@@ -24,6 +24,14 @@
  *     `requireUserId` resolves a dev user with no database configured, and
  *     throws fail-closed once `DATABASE_URL` is set (see `verify.server.ts`).
  *
+ * Two additions for apps deployed by hand (their own Vercel project, their own
+ * domain) rather than by the Grok deployer, which the tri-mode above assumes:
+ *   - The public origin is recovered from the platform's env (see
+ *     `./public-hosts`), so `redirect_uri` and the CSRF allowlist name the real
+ *     host instead of falling through to localhost.
+ *   - X sign-in can bypass the broker entirely (see `./x-oauth.server`), since
+ *     the broker holds no client for such a domain.
+ *
  * NEVER import this from client code — it pulls in `pg` + the preview secret +
  * server-only Better Auth internals. The client uses `@/lib/auth/client`;
  * components read the user via `@/lib/auth/use-current-user`; server functions get
@@ -40,6 +48,8 @@ import { emailAndPasswordEnabled } from "./email-password";
 import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
+import { publicHosts, publicOrigins } from "./public-hosts";
+import { xDirectAuthConfigured, xDirectProvider } from "./x-oauth.server";
 import {
   GROK_ISSUER_DEFAULT,
   PREVIEW_ALLOWED_HOSTS,
@@ -103,10 +113,30 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
 ];
+// Hosts this deployment actually answers on, recovered from the platform's env
+// (`VERCEL_*`) or `APP_PUBLIC_HOSTS` — see `./public-hosts`. Empty in the live
+// preview and in local dev.
+//
+// WITHOUT these, a hand-deployed app is neither a preview host nor a loopback
+// host, so the dynamic baseURL below falls through to its localhost fallback:
+// every sign-in is started with `redirect_uri=http://localhost:8080/...`, which
+// the upstream refuses (and which would land nowhere if it didn't). The same
+// hosts also have to be trusted origins, or credentialed auth POSTs from them
+// are rejected as "Invalid origin".
+const deployedHosts: string[] = publicHosts(process.env);
+const deployedOrigins: string[] = publicOrigins(process.env);
+
 const baseURL = explicitBaseURL ?? {
   // Include loopback hosts so dynamic baseURL resolves for local email/password
-  // (not only the preview wildcard).
-  allowedHosts: [...previewAllowedHosts, "localhost", "127.0.0.1", "[::1]"],
+  // (not only the preview wildcard), and the deployment's own hosts so a
+  // hand-deployed app derives its real origin instead of the fallback.
+  allowedHosts: [
+    ...previewAllowedHosts,
+    ...deployedHosts,
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+  ],
   // `auto` → trust both http:// and https:// expansions of allowedHosts
   // (preview is https; local dev is http).
   protocol: "auto" as const,
@@ -115,13 +145,15 @@ const baseURL = explicitBaseURL ?? {
 
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
+// `deployedOrigins` is https-only: a deployed host is never served over http.
 const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS]
+  ? [explicitBaseURL, ...deployedOrigins, ...LOCAL_DEV_ORIGINS]
   : [
       // Host wildcards (matched against Origin's host)
       ...previewAllowedHosts,
       // Full-origin wildcards (matched against Origin)
       ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+      ...deployedOrigins,
       ...LOCAL_DEV_ORIGINS,
     ];
 
@@ -148,29 +180,57 @@ const database = databaseUrl
 /** Session token cookie name — also read by the live-preview popup completion page. */
 export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
 
-// Built separately so the `betterAuth({...})` call stays easy to edit without
-// breaking brackets (models often trip on the conditional plugin spread).
+/**
+ * One `genericOAuth` entry per upstream. Built separately so the
+ * `betterAuth({...})` call below stays easy to edit without breaking brackets.
+ *
+ * X is the exception: the broker only issues callbacks for origins it has a
+ * client registered for, so on a self-deployed domain the brokered X flow can
+ * never complete. When `X_CLIENT_ID` / `X_CLIENT_SECRET` are set we therefore
+ * back the SAME provider id (`grok-x`) with a direct X client instead — the
+ * button, the callback path and the live-preview popup all stay unchanged, only
+ * the upstream differs. See `./x-oauth.server`.
+ */
+function providerConfigs() {
+  return GROK_PROVIDERS.map(({ providerId, idp }) => {
+    if (idp === "twitter") {
+      const direct = xDirectProvider(providerId);
+      if (direct) return direct;
+    }
+    return {
+      providerId,
+      clientId: grokClientId as string,
+      clientSecret: grokClientSecret as string,
+      // Prefer static endpoints over `discoveryUrl` so initiating (and
+      // completing) OAuth does not wait on a broker discovery fetch.
+      authorizationUrl: grokAuthorizationUrl,
+      tokenUrl: grokTokenUrl,
+      userInfoUrl: grokUserInfoUrl,
+      scopes: ["openid", "profile", "email"],
+      // `prompt: "login"` forces the broker to re-authenticate against the
+      // upstream on every sign-in instead of silently reusing an existing
+      // broker session. Combined with the broker sending Google
+      // `prompt=select_account`, the user always gets the account chooser
+      // and can pick (or switch) which account to sign in with.
+      authorizationUrlParams: { idp, prompt: "login" },
+    };
+  });
+}
+
 const grokOAuthPlugin = authConfigured
-  ? genericOAuth({
-      config: GROK_PROVIDERS.map(({ providerId, idp }) => ({
-        providerId,
-        clientId: grokClientId as string,
-        clientSecret: grokClientSecret as string,
-        // Prefer static endpoints over `discoveryUrl` so initiating (and
-        // completing) OAuth does not wait on a broker discovery fetch.
-        authorizationUrl: grokAuthorizationUrl,
-        tokenUrl: grokTokenUrl,
-        userInfoUrl: grokUserInfoUrl,
-        scopes: ["openid", "profile", "email"],
-        // `prompt: "login"` forces the broker to re-authenticate against the
-        // upstream on every sign-in instead of silently reusing an existing
-        // broker session. Combined with the broker sending Google
-        // `prompt=select_account`, the user always gets the account chooser
-        // and can pick (or switch) which account to sign in with.
-        authorizationUrlParams: { idp, prompt: "login" },
-      })),
-    })
+  ? genericOAuth({ config: providerConfigs() })
   : null;
+
+// One line at boot so a deployment that is still pointed at the broker (and so
+// cannot complete X sign-in on its own domain) is visible in the runtime logs
+// rather than only as a dead button.
+if (authConfigured && !xDirectAuthConfigured()) {
+  console.info(
+    "[auth] X sign-in federates through the Grok broker. On a domain the " +
+      "broker has no client for, set X_CLIENT_ID + X_CLIENT_SECRET to sign in " +
+      "with X directly.",
+  );
+}
 
 export const auth = betterAuth({
   baseURL,
