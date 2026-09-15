@@ -49,7 +49,7 @@ import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
 import { publicHosts, publicOrigins, requestOrigin } from "./public-hosts";
-import { xDirectAuthConfigured, xDirectProvider } from "./x-oauth.server";
+import { xDirectAuthConfigured, xSocialProviders } from "./x-oauth.server";
 import {
   GROK_ISSUER_DEFAULT,
   PREVIEW_ALLOWED_HOSTS,
@@ -195,46 +195,36 @@ const database = databaseUrl
 /** Session token cookie name — also read by the live-preview popup completion page. */
 export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
 
-/**
- * One `genericOAuth` entry per upstream. Built separately so the
- * `betterAuth({...})` call below stays easy to edit without breaking brackets.
- *
- * X is the exception: the broker only issues callbacks for origins it has a
- * client registered for, so on a self-deployed domain the brokered X flow can
- * never complete. When `X_CLIENT_ID` / `X_CLIENT_SECRET` are set we therefore
- * back the SAME provider id (`grok-x`) with a direct X client instead — the
- * button, the callback path and the live-preview popup all stay unchanged, only
- * the upstream differs. See `./x-oauth.server`.
- */
-function providerConfigs() {
-  return GROK_PROVIDERS.map(({ providerId, idp }) => {
-    if (idp === "twitter") {
-      const direct = xDirectProvider(providerId);
-      if (direct) return direct;
-    }
-    return {
-      providerId,
-      clientId: grokClientId as string,
-      clientSecret: grokClientSecret as string,
-      // Prefer static endpoints over `discoveryUrl` so initiating (and
-      // completing) OAuth does not wait on a broker discovery fetch.
-      authorizationUrl: grokAuthorizationUrl,
-      tokenUrl: grokTokenUrl,
-      userInfoUrl: grokUserInfoUrl,
-      scopes: ["openid", "profile", "email"],
-      // `prompt: "login"` forces the broker to re-authenticate against the
-      // upstream on every sign-in instead of silently reusing an existing
-      // broker session. Combined with the broker sending Google
-      // `prompt=select_account`, the user always gets the account chooser
-      // and can pick (or switch) which account to sign in with.
-      authorizationUrlParams: { idp, prompt: "login" },
-    };
-  });
-}
-
+// Built separately so the `betterAuth({...})` call stays easy to edit without
+// breaking brackets (models often trip on the conditional plugin spread).
 const grokOAuthPlugin = authConfigured
-  ? genericOAuth({ config: providerConfigs() })
+  ? genericOAuth({
+      config: GROK_PROVIDERS.map(({ providerId, idp }) => ({
+        providerId,
+        clientId: grokClientId as string,
+        clientSecret: grokClientSecret as string,
+        // Prefer static endpoints over `discoveryUrl` so initiating (and
+        // completing) OAuth does not wait on a broker discovery fetch.
+        authorizationUrl: grokAuthorizationUrl,
+        tokenUrl: grokTokenUrl,
+        userInfoUrl: grokUserInfoUrl,
+        scopes: ["openid", "profile", "email"],
+        // `prompt: "login"` forces the broker to re-authenticate against the
+        // upstream on every sign-in instead of silently reusing an existing
+        // broker session. Combined with the broker sending Google
+        // `prompt=select_account`, the user always gets the account chooser
+        // and can pick (or switch) which account to sign in with.
+        authorizationUrlParams: { idp, prompt: "login" },
+      })),
+    })
   : null;
+
+// X, talking to X rather than to the broker, when a client is configured. This
+// is Better Auth's built-in provider rather than another `genericOAuth` entry,
+// so its callback lands on `/api/auth/callback/twitter` — the URL registered in
+// the X developer portal. The brokered `grok-x` entry above stays registered
+// either way; `activeXProviderId` decides which one the UI actually uses.
+const socialProviders = authConfigured ? xSocialProviders() : {};
 
 // A couple of lines at boot, so the two ways a deployment can be misconfigured
 // are visible in the runtime logs instead of only as a dead Connect button.
@@ -302,6 +292,9 @@ export const auth = betterAuth({
 
   // Local email/password — toggled only via `./email-password` (not a plugin).
   ...(emailAndPasswordEnabled ? { emailAndPassword: { enabled: true } } : {}),
+
+  // Direct X sign-in, when configured (empty otherwise). See `./x-oauth.server`.
+  socialProviders,
 
   // `__Host-` prefixed cookies: the browser REFUSES any same-named cookie that
   // carries a `Domain` attribute, so a sibling `*.grok.me` app cannot "toss" a

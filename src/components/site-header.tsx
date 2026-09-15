@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useState, useSyncExternalStore } from "react";
 import { authEnabled, signOut } from "@/lib/auth/client";
-import { connectX } from "@/lib/auth/connect";
+import { useConnectX } from "@/lib/auth/connect";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { XLogo } from "@/components/brand-icons";
@@ -36,8 +36,9 @@ function Tape() {
 }
 
 function EnterChip() {
+  const connectX = useConnectX();
   return (
-    <button type="button" onClick={() => connectX()} className="pit-chip">
+    <button type="button" onClick={connectX} className="pit-chip">
       <XLogo className="size-3.5" />
       <span className="hidden sm:inline">CONNECT_X</span>
       <span className="sm:hidden">X</span>

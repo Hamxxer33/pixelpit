@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { authEnabled, signOut } from "@/lib/auth/client";
-import { connectX } from "@/lib/auth/connect";
+import { useConnectX } from "@/lib/auth/connect";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { useSyncExternalStore } from "react";
@@ -258,6 +258,7 @@ function SignedInMenu({
 }
 
 function GuestMenu() {
+  const connectX = useConnectX();
   return (
     <div className="space-y-8">
       <section>
