@@ -48,7 +48,7 @@ import { emailAndPasswordEnabled } from "./email-password";
 import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
-import { publicHosts, publicOrigins } from "./public-hosts";
+import { publicHosts, publicOrigins, requestOrigin } from "./public-hosts";
 import { xDirectAuthConfigured, xDirectProvider } from "./x-oauth.server";
 import {
   GROK_ISSUER_DEFAULT,
@@ -146,7 +146,7 @@ const baseURL = explicitBaseURL ?? {
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
 // `deployedOrigins` is https-only: a deployed host is never served over http.
-const trustedOrigins: string[] = explicitBaseURL
+const staticTrustedOrigins: string[] = explicitBaseURL
   ? [explicitBaseURL, ...deployedOrigins, ...LOCAL_DEV_ORIGINS]
   : [
       // Host wildcards (matched against Origin's host)
@@ -156,6 +156,21 @@ const trustedOrigins: string[] = explicitBaseURL
       ...deployedOrigins,
       ...LOCAL_DEV_ORIGINS,
     ];
+
+// …plus the origin the request was actually made to. The static list can only
+// name hosts we can predict from env, and a deployment answers on more than
+// that: Vercel's `<project>.vercel.app` alias, any custom domain, and every
+// alias added after deploy — none of which appear in `VERCEL_URL` or
+// `VERCEL_PROJECT_PRODUCTION_URL`. A project with "Automatically expose System
+// Environment Variables" turned off has none of them at all.
+//
+// This only ever adds the app's OWN origin, so it accepts same-origin requests
+// and nothing else — exactly the property the CSRF check enforces. See
+// `requestOrigin` in `./public-hosts` for why that is safe.
+const trustedOrigins = (request?: Request): string[] => {
+  const origin = requestOrigin(request?.headers);
+  return origin ? [...staticTrustedOrigins, origin] : staticTrustedOrigins;
+};
 
 const databaseUrl = env("DATABASE_URL");
 
@@ -221,15 +236,30 @@ const grokOAuthPlugin = authConfigured
   ? genericOAuth({ config: providerConfigs() })
   : null;
 
-// One line at boot so a deployment that is still pointed at the broker (and so
-// cannot complete X sign-in on its own domain) is visible in the runtime logs
-// rather than only as a dead button.
+// A couple of lines at boot, so the two ways a deployment can be misconfigured
+// are visible in the runtime logs instead of only as a dead Connect button.
 if (authConfigured && !xDirectAuthConfigured()) {
   console.info(
     "[auth] X sign-in federates through the Grok broker. On a domain the " +
       "broker has no client for, set X_CLIENT_ID + X_CLIENT_SECRET to sign in " +
       "with X directly.",
   );
+}
+if (authConfigured && !explicitBaseURL) {
+  if (deployedHosts.length > 0) {
+    console.info(`[auth] public hosts: ${deployedHosts.join(", ")}`);
+  } else if (env("VERCEL")) {
+    // Same-origin requests still get through (see `trustedOrigins`), but the
+    // OAuth `redirect_uri` is built from `baseURL`, which has no host to
+    // resolve to and falls back to localhost.
+    console.error(
+      "[auth] running on Vercel but no public host could be derived — " +
+        "VERCEL_URL / VERCEL_PROJECT_PRODUCTION_URL are missing (check " +
+        '"Automatically expose System Environment Variables" in project ' +
+        "settings). Set APP_PUBLIC_HOSTS to this deployment's domains, or " +
+        "OAuth will start with a localhost redirect_uri.",
+    );
+  }
 }
 
 export const auth = betterAuth({
