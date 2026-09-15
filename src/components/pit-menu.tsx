@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
-import { authEnabled, signIn, signOut } from "@/lib/auth/client";
+import { authEnabled, signOut } from "@/lib/auth/client";
+import { connectX } from "@/lib/auth/connect";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { useSyncExternalStore } from "react";
@@ -273,7 +274,7 @@ function GuestMenu() {
           block
           onClick={() => {
             usePitStore.getState().setMenuOpen(false);
-            void signIn("grok-x", { callbackURL: "/" });
+            connectX();
           }}
         >
           <XLogo />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { signIn } from "@/lib/auth/client";
+import { connectX } from "@/lib/auth/connect";
 import { PitWell } from "@/components/pixel-art";
 import { Button } from "@/components/ui/button";
 import { XLogo } from "@/components/brand-icons";
@@ -68,7 +68,7 @@ export function Landing() {
             <Button
               size="lg"
               className="w-full sm:w-auto"
-              onClick={() => signIn("grok-x", { callbackURL: "/" })}
+              onClick={() => connectX()}
             >
               <XLogo />
               Connect X
@@ -187,7 +187,7 @@ export function Landing() {
           <Button
             size="lg"
             className="w-full shrink-0 sm:w-auto"
-            onClick={() => signIn("grok-x", { callbackURL: "/" })}
+            onClick={() => connectX()}
           >
             <XLogo />
             Connect X
