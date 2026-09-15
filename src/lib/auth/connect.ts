@@ -1,66 +1,83 @@
 /**
- * The one "Connect X" entry point the UI calls.
+ * Sign-in, sign-out and wallet linking — the hooks the UI calls.
  *
- * `signIn` rejects on every failure path — a blocked popup, a cancelled
- * upstream, a rejected origin — and every call site used to be a bare
- * `void signIn(...)`, so a failure was swallowed and the button just looked
- * dead. Funnelling them through here means a failed connect always says
- * something.
+ * All three are Privy modal flows. They are wrapped here rather than called
+ * directly for two reasons:
  *
- * Which provider id backs X is a server-side decision (direct X when a client
- * is configured, the Grok broker otherwise), so the hooks below read it from
- * `AuthProvider` rather than hard-coding one.
+ *  - Every failure reports itself. A bare `login()` that throws leaves the
+ *    button looking dead, which is exactly how the previous X-OAuth breakage
+ *    presented.
+ *  - They stay safe when Privy is NOT configured. `AuthProvider` only mounts
+ *    `PrivyProvider` for a valid app id, and Privy's hooks throw without their
+ *    provider — so an unset or mistyped `VITE_PRIVY_APP_ID` would crash the
+ *    render rather than just disabling login. Each hook below therefore checks
+ *    `privyEnabled` BEFORE touching a Privy hook.
+ *
+ * `privyEnabled` is a module-level constant fixed at load, so these guarded
+ * hook calls keep a stable hook order across every render of a component.
  */
+/* eslint-disable react-hooks/rules-of-hooks -- privyEnabled is constant for the app's lifetime */
 import { useCallback } from "react";
+import { useConnectWallet, useLogin, useLogout, usePrivy } from "@privy-io/react-auth";
 import { toast } from "sonner";
-import { signIn } from "./client";
-import { useXProviderId } from "./x-provider-context";
+import { privyEnabled } from "./privy";
 
-/**
- * Turn a Better Auth / browser failure into something a visitor can act on.
- * Unrecognized failures keep their own message — it is more useful than a
- * generic one when something new breaks.
- */
-function readableError(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err ?? "");
-  if (/invalid origin/i.test(message)) {
-    return "Sign-in isn't configured for this domain yet.";
-  }
-  if (/invalid redirect uri/i.test(message)) {
-    return "Sign-in isn't set up for this domain yet.";
-  }
-  if (/pop-?up/i.test(message)) {
-    return "Pop-up blocked — allow pop-ups for this site and try again.";
-  }
-  if (/cancel/i.test(message)) return "Sign-in was cancelled.";
-  if (/failed to fetch|network/i.test(message)) {
-    return "Couldn't reach the server. Check your connection and try again.";
-  }
-  return message || "Couldn't connect X. Try again.";
+/** Report a failure: a short line for the visitor, the raw one for the console. */
+function report(err: unknown, fallback: string): void {
+  console.error("[auth]", fallback, err);
+  const message = err instanceof Error ? err.message : "";
+  // Privy reports a dismissed modal as an error; that is a choice, not a fault.
+  if (/closed|cancel|dismiss|abort|exited/i.test(message)) return;
+  toast.error(message || fallback);
+}
+
+function notConfigured(): void {
+  toast.error("Sign-in isn't configured yet.");
 }
 
 /**
- * Report a failed sign-in: a short line for the visitor, the raw one for
- * whoever is looking at the console — `readableError` deliberately loses detail
- * that only a developer can act on.
+ * Open Privy's login modal.
+ *
+ * Privy brokers X sign-in with its OWN registered X app, so there is no
+ * developer-portal callback tied to our domain to keep in sync — which is the
+ * reason login lives here rather than in a direct X OAuth flow.
  */
-function report(err: unknown): void {
-  console.error("[auth] sign-in failed:", err);
-  toast.error(readableError(err));
+export function useConnectX(): () => void {
+  if (!privyEnabled) return notConfigured;
+  const { login } = useLogin({
+    onError: (error) => report(error, "Couldn't connect. Try again."),
+  });
+  return useCallback(() => login(), [login]);
 }
 
-/** Start sign-in with X, reporting anything that goes wrong. */
-export function useConnectX(callbackURL = "/"): () => void {
-  const providerId = useXProviderId();
-  return useCallback(() => {
-    void signIn(providerId, { callbackURL }).catch(report);
-  }, [providerId, callbackURL]);
+/** Sign out, then send the visitor somewhere. */
+export function useSignOut(redirectTo = "/"): () => Promise<void> {
+  if (!privyEnabled) return async () => {};
+  const { logout } = useLogout();
+  return useCallback(async () => {
+    await logout();
+    if (typeof window !== "undefined") window.location.href = redirectTo;
+  }, [logout, redirectTo]);
 }
 
 /**
- * Start sign-in with an explicit provider id (the sign-in page, which lists
- * every provider). For X prefer `useConnectX`, which resolves the id for you.
+ * Link a wallet through Privy and hand the address back.
+ *
+ * The board locks ONE wallet per hunter, so the address still goes through
+ * `submitWallet` server-side (which derives the chain and enforces uniqueness)
+ * — this only saves the visitor pasting it by hand.
  */
-export function connectProvider(providerId: string, callbackURL = "/"): void {
-  void signIn(providerId, { callbackURL }).catch(report);
+export function useConnectWalletAddress(onAddress: (address: string) => void): () => void {
+  if (!privyEnabled) return notConfigured;
+  const { connectWallet } = useConnectWallet({
+    onSuccess: ({ wallet }) => onAddress(wallet.address),
+    onError: (error) => report(error, "Couldn't connect that wallet."),
+  });
+  return useCallback(() => connectWallet(), [connectWallet]);
+}
+
+/** True once Privy has resolved whether anyone is signed in. */
+export function useAuthReady(): boolean {
+  if (!privyEnabled) return true;
+  return usePrivy().ready;
 }

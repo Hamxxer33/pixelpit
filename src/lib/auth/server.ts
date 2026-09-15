@@ -49,7 +49,6 @@ import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
 import { publicHosts, publicOrigins, requestOrigin } from "./public-hosts";
-import { xDirectAuthConfigured, xSocialProviders } from "./x-oauth.server";
 import {
   GROK_ISSUER_DEFAULT,
   PREVIEW_ALLOWED_HOSTS,
@@ -219,22 +218,8 @@ const grokOAuthPlugin = authConfigured
     })
   : null;
 
-// X, talking to X rather than to the broker, when a client is configured. This
-// is Better Auth's built-in provider rather than another `genericOAuth` entry,
-// so its callback lands on `/api/auth/callback/twitter` — the URL registered in
-// the X developer portal. The brokered `grok-x` entry above stays registered
-// either way; `activeXProviderId` decides which one the UI actually uses.
-const socialProviders = authConfigured ? xSocialProviders() : {};
-
-// A couple of lines at boot, so the two ways a deployment can be misconfigured
-// are visible in the runtime logs instead of only as a dead Connect button.
-if (authConfigured && !xDirectAuthConfigured()) {
-  console.info(
-    "[auth] X sign-in federates through the Grok broker. On a domain the " +
-      "broker has no client for, set X_CLIENT_ID + X_CLIENT_SECRET to sign in " +
-      "with X directly.",
-  );
-}
+// One line at boot, so a deployment that cannot build a correct OAuth
+// redirect_uri is visible in the runtime logs rather than only as a dead button.
 if (authConfigured && !explicitBaseURL) {
   if (deployedHosts.length > 0) {
     console.info(`[auth] public hosts: ${deployedHosts.join(", ")}`);
@@ -293,8 +278,6 @@ export const auth = betterAuth({
   // Local email/password — toggled only via `./email-password` (not a plugin).
   ...(emailAndPasswordEnabled ? { emailAndPassword: { enabled: true } } : {}),
 
-  // Direct X sign-in, when configured (empty otherwise). See `./x-oauth.server`.
-  socialProviders,
 
   // `__Host-` prefixed cookies: the browser REFUSES any same-named cookie that
   // carries a `Domain` attribute, so a sibling `*.grok.me` app cannot "toss" a

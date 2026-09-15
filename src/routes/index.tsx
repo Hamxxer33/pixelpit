@@ -1,19 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import {
+  hadPreviousSession,
+  useCurrentUserState,
+} from "@/lib/auth/use-current-user";
 import { Landing } from "@/components/landing";
 import { PitApp } from "@/components/pit-app";
 
 export const Route = createFileRoute("/")({ component: Home });
 
 function Home() {
-  const { sessionUser } = Route.useRouteContext();
   const { user, isPending } = useCurrentUserState();
 
   if (user) {
     return <PitApp user={user} />;
   }
 
-  if (isPending && sessionUser) {
+  // Only hold the skeleton for a browser that WAS signed in. A first-time
+  // visitor goes straight to the landing page instead of watching a loader
+  // resolve to it (see `hadPreviousSession`).
+  if (isPending && hadPreviousSession()) {
     return (
       <div className="mx-auto w-full max-w-6xl px-4 py-10">
         <p className="font-mono text-[0.68rem] tracking-[0.18em] text-muted uppercase">

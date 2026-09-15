@@ -8,68 +8,48 @@ You land on your **hunter board**: mindshare, rank, posts, streak. Tabs are Lead
 
 ## Deploy env
 
-Set these on Vercel (server only — never `VITE_`):
+Set these on Vercel:
 
-| Name                    | Why                                                                     |
-| ----------------------- | ----------------------------------------------------------------------- |
-| `DATABASE_URL`          | Neon Postgres                                                           |
-| `TWITTER_CLIENT_ID`     | X OAuth 2.0 Client ID — "Connect X" sign-in                             |
-| `TWITTER_CLIENT_SECRET` | X OAuth 2.0 Client Secret — "Connect X" sign-in                         |
-| `BETTER_AUTH_URL`       | `https://www.pixelpit.app` — pins the OAuth redirect and trusted origin |
-| `X_API_KEY`             | X API Key — reading public posts                                        |
-| `X_API_SECRET`          | X API Secret — reading public posts                                     |
-| `APP_PUBLIC_HOSTS`      | Optional. Extra domains this deployment serves, comma-separated         |
+| Name                | Why                                              |
+| ------------------- | ------------------------------------------------ |
+| `DATABASE_URL`      | Neon Postgres                                    |
+| `VITE_PRIVY_APP_ID` | Privy app id — login. Public; safe in the bundle |
+| `X_API_KEY`         | X API Key — reading public posts                 |
+| `X_API_SECRET`      | X API Secret — reading public posts              |
 
-### Setting up "Connect X"
+Vercel bakes environment variables into a deployment at build time, so editing
+one does nothing until you **redeploy**.
 
-Sign-in normally federates through the shared Grok auth broker, which only issues
-callbacks for origins it holds a client for. A deployment on its own domain isn't
-one of those, so X sign-in has to talk to X directly.
+## Login
 
-1. In the [X developer portal](https://developer.x.com), open your app →
-   **User authentication settings**.
-2. App permissions: **Read**. Type of App: **Web App** (a confidential client).
-3. Callback URI / Redirect URL — this exact path, for whichever domain
-   `BETTER_AUTH_URL` names:
+Login is [Privy](https://dashboard.privy.io). Privy brokers X sign-in with its
+own registered X app, so there is no X developer-portal callback tied to this
+domain — which is what kept breaking when the app talked to X directly, and what
+breaks again every time the domain moves.
 
-   ```
-   https://www.pixelpit.app/api/auth/callback/twitter
-   ```
+To set it up:
 
-4. Copy the **OAuth 2.0 Client ID** and **Client Secret** (not the API key/secret)
-   into `TWITTER_CLIENT_ID` and `TWITTER_CLIENT_SECRET` on Vercel, for the
-   Production environment, then redeploy. (`X_CLIENT_ID` / `X_CLIENT_SECRET`
-   are accepted as aliases.)
+1. Create an app at [dashboard.privy.io](https://dashboard.privy.io).
+2. **Login methods → Socials → X**, enabled with Privy's default credentials.
+   (You _can_ supply your own X OAuth app here instead, but then you own the
+   callback-URL problem again.)
+3. **Login methods → Wallets** on, so a hunter can link a wallet instead of
+   pasting an address.
+4. Copy the App ID into `VITE_PRIVY_APP_ID` on Vercel, then redeploy.
 
-With those set, X sign-in uses Better Auth's built-in `twitter` provider and
-talks to X directly. Without them it federates through the Grok broker, which
-holds no client for this domain and answers `{"message":"Invalid redirect URI"}`.
-The server resolves which one is live during SSR and hands it to the Connect
-button, so there is nothing to configure on the client.
+The app id is exactly 25 characters. `PrivyProvider` throws on anything else
+_during SSR_, which would return 500 on every page — so a malformed id is
+rejected before the provider sees it and login simply reports itself as
+unconfigured, with the reason logged.
 
-Scopes requested: `users.read`, `tweet.read`, `offline.access`. X doesn't return an
-email without the opt-in `users.email` scope, so each account gets a stable
-synthetic address derived from its numeric X id — it's an internal key, never
-mailed to.
+### How a request is authorized
 
-### Origins
+The browser holds the session and Privy issues a short-lived access token (a JWT
+signed ES256). `authMiddleware` forwards it on every server function call, and
+the server verifies it locally against the app's public JWKS — issuer
+`privy.io`, audience pinned to the app id, so a token minted for a different
+Privy app cannot be replayed here. The verified `sub` claim (a `did:privy:…`
+DID) is the user id every query is scoped by.
 
-Better Auth has to know the origin the app is actually served on: it becomes the
-OAuth `redirect_uri`, and it's the allowlist the sign-in request is checked
-against. The app works it out in two ways:
-
-- **Per request** — the origin the request was actually made to is always
-  trusted. That's same-origin by definition, so it accepts nothing an attacker
-  could reach, and it means a domain nobody remembered to configure still signs
-  in.
-- **From the environment** — `VERCEL_PROJECT_PRODUCTION_URL`, `VERCEL_BRANCH_URL`
-  and `VERCEL_URL`, pairing a custom domain with its `www.`/apex sibling and
-  reconstructing the `<project>.vercel.app` alias (Vercel exposes no env var for
-  it). This list is what `redirect_uri` is built from, so a host missing here
-  starts OAuth pointed at `localhost` even though sign-in isn't rejected.
-
-Set `APP_PUBLIC_HOSTS` (comma-separated) for anything those miss — in
-particular if the project has **Automatically expose System Environment
-Variables** turned off, in which case none of the `VERCEL_*` vars exist and it's
-the only source. The server logs its resolved host list at boot, and logs an
-error naming this when it's on Vercel with nothing to go on.
+The X API keys above are unrelated to login: they mint an app-only bearer for
+reading public posts.

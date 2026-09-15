@@ -1,5 +1,6 @@
 import { getRequest } from "@tanstack/react-start/server";
 import { gateIdentityEnabled } from "./gate-identity.server";
+import { privyConfigured, verifyPrivyToken } from "./privy.server";
 import { auth, authConfigured } from "./server";
 
 /**
@@ -57,6 +58,16 @@ export type VerifiedUser = { id: string; email: string | null };
 export async function getSessionUser(
   bearerToken?: string,
 ): Promise<VerifiedUser | null> {
+  // Privy owns user login: the browser forwards its access token as
+  // `bearerToken` (see `./middleware`) and we verify it locally. Checked first
+  // because it is the only path a signed-in visitor actually uses; the Better
+  // Auth branches below remain for the platform gate-identity path.
+  if (privyConfigured()) {
+    const privyUserId = await verifyPrivyToken(bearerToken);
+    if (privyUserId) return { id: privyUserId, email: null };
+    // Fall through: in the Grok preview the caller may be gate-identified
+    // instead, and that path has its own session handling below.
+  }
   if (!authConfigured && !gateIdentityEnabled()) return null;
   const request = getRequest();
   if (!request) return null;
@@ -82,6 +93,14 @@ export async function getSessionUser(
  * - Auth disabled + no database -> the shared dev user id.
  */
 export async function requireUserId(bearerToken?: string): Promise<string> {
+  if (privyConfigured()) {
+    const privyUserId = await verifyPrivyToken(bearerToken);
+    if (privyUserId) return privyUserId;
+    // With Privy configured and no gate identity in play, an unverifiable token
+    // is simply "signed out" — never fall back to a shared dev user, which on a
+    // real database would hand every visitor the same rows.
+    if (!gateIdentityEnabled()) throw new UnauthorizedError();
+  }
   if (!authConfigured && !gateIdentityEnabled()) {
     if (databaseConfigured) {
       throw new Error(
