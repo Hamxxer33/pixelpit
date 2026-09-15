@@ -28,9 +28,11 @@ one of those, so X sign-in has to talk to X directly.
 1. In the [X developer portal](https://developer.x.com), open your app →
    **User authentication settings**.
 2. App permissions: **Read**. Type of App: **Web App** (a confidential client).
-3. Callback URI / Redirect URL — add one per domain you serve:
+3. Callback URI / Redirect URL — add one per domain you serve, **including the
+   `.vercel.app` alias if you test on it**:
    - `https://www.pixelpit.app/api/auth/oauth2/callback/grok-x`
    - `https://pixelpit.app/api/auth/oauth2/callback/grok-x`
+   - `https://pixelpitapp.vercel.app/api/auth/oauth2/callback/grok-x`
 4. Copy the **OAuth 2.0 Client ID** and **Client Secret** (not the API key/secret)
    into `X_CLIENT_ID` and `X_CLIENT_SECRET` on Vercel, for the Production
    environment, then redeploy.
@@ -43,9 +45,21 @@ mailed to.
 ### Origins
 
 Better Auth has to know the origin the app is actually served on: it becomes the
-OAuth `redirect_uri`, and it's the CSRF allowlist for the sign-in request. The app
-derives it from `VERCEL_PROJECT_PRODUCTION_URL`, `VERCEL_BRANCH_URL` and
-`VERCEL_URL` (and pairs a custom domain with its `www.`/apex sibling). Add
-`APP_PUBLIC_HOSTS` only for domains those don't cover. If the origin isn't
-trusted, `POST /api/auth/sign-in/oauth2` returns 403 `Invalid origin` and the
-Connect X button reports that it isn't configured for the domain.
+OAuth `redirect_uri`, and it's the allowlist the sign-in request is checked
+against. The app works it out in two ways:
+
+- **Per request** — the origin the request was actually made to is always
+  trusted. That's same-origin by definition, so it accepts nothing an attacker
+  could reach, and it means a domain nobody remembered to configure still signs
+  in.
+- **From the environment** — `VERCEL_PROJECT_PRODUCTION_URL`, `VERCEL_BRANCH_URL`
+  and `VERCEL_URL`, pairing a custom domain with its `www.`/apex sibling and
+  reconstructing the `<project>.vercel.app` alias (Vercel exposes no env var for
+  it). This list is what `redirect_uri` is built from, so a host missing here
+  starts OAuth pointed at `localhost` even though sign-in isn't rejected.
+
+Set `APP_PUBLIC_HOSTS` (comma-separated) for anything those miss — in
+particular if the project has **Automatically expose System Environment
+Variables** turned off, in which case none of the `VERCEL_*` vars exist and it's
+the only source. The server logs its resolved host list at boot, and logs an
+error naming this when it's on Vercel with nothing to go on.

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeHost, publicHosts, publicOrigins } from "./public-hosts.ts";
+import {
+  normalizeHost,
+  publicHosts,
+  publicOrigins,
+  requestOrigin,
+  vercelProjectAlias,
+} from "./public-hosts.ts";
 
 describe("normalizeHost", () => {
   it("accepts a bare host", () => {
@@ -81,5 +87,84 @@ describe("publicOrigins", () => {
       "https://pixelpit.app",
       "https://www.pixelpit.app",
     ]);
+  });
+});
+
+describe("vercelProjectAlias", () => {
+  it("derives <project>.vercel.app from the branch URL", () => {
+    assert.equal(
+      vercelProjectAlias({
+        VERCEL_BRANCH_URL: "pixelpitapp-git-main-agentify-s-projects.vercel.app",
+      }),
+      "pixelpitapp.vercel.app",
+    );
+  });
+
+  it("keeps hyphens that belong to the project slug", () => {
+    assert.equal(
+      vercelProjectAlias({ VERCEL_BRANCH_URL: "my-cool-app-git-main-acme.vercel.app" }),
+      "my-cool-app.vercel.app",
+    );
+  });
+
+  it("splits on the FIRST -git- so a branch named after git still works", () => {
+    assert.equal(
+      vercelProjectAlias({ VERCEL_BRANCH_URL: "myapp-git-feature-git-stuff-acme.vercel.app" }),
+      "myapp.vercel.app",
+    );
+  });
+
+  it("guesses nothing when the var is absent or unexpected", () => {
+    assert.equal(vercelProjectAlias({}), null);
+    assert.equal(vercelProjectAlias({ VERCEL_BRANCH_URL: "example.com" }), null);
+    assert.equal(vercelProjectAlias({ VERCEL_BRANCH_URL: "-git-main-acme.vercel.app" }), null);
+    assert.equal(vercelProjectAlias({ VERCEL_BRANCH_URL: "nogitmarker.vercel.app" }), null);
+  });
+
+  it("is included in publicHosts", () => {
+    const hosts = publicHosts({
+      VERCEL_BRANCH_URL: "pixelpitapp-git-main-agentify-s-projects.vercel.app",
+    });
+    assert.ok(hosts.includes("pixelpitapp.vercel.app"));
+  });
+});
+
+describe("requestOrigin", () => {
+  const origin = (init: Record<string, string>) => requestOrigin(new Headers(init));
+
+  it("prefers the proxy's forwarded host", () => {
+    assert.equal(
+      origin({
+        "x-forwarded-host": "www.pixelpit.app",
+        host: "internal.vercel",
+        "x-forwarded-proto": "https",
+      }),
+      "https://www.pixelpit.app",
+    );
+  });
+
+  it("falls back to the host header, https by default", () => {
+    assert.equal(origin({ host: "pixelpitapp.vercel.app" }), "https://pixelpitapp.vercel.app");
+  });
+
+  it("uses http for loopback so local dev is not broken", () => {
+    assert.equal(origin({ host: "localhost:8080" }), "http://localhost:8080");
+    assert.equal(origin({ host: "127.0.0.1:8080" }), "http://127.0.0.1:8080");
+  });
+
+  it("honours a forwarded proto, taking the first hop", () => {
+    assert.equal(
+      origin({ host: "pixelpit.app", "x-forwarded-proto": "https,http" }),
+      "https://pixelpit.app",
+    );
+  });
+
+  it("returns null without headers or without a host", () => {
+    assert.equal(requestOrigin(undefined), null);
+    assert.equal(origin({}), null);
+  });
+
+  it("rejects a non-http scheme", () => {
+    assert.equal(origin({ host: "pixelpit.app", "x-forwarded-proto": "javascript" }), null);
   });
 });

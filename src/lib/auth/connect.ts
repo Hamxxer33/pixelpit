@@ -33,16 +33,22 @@ function readableError(err: unknown): string {
   return message || "Couldn't connect X. Try again.";
 }
 
+/**
+ * Report a failed sign-in: a short line for the visitor, the raw one for
+ * whoever is looking at the console — `readableError` deliberately loses detail
+ * that only a developer can act on.
+ */
+function report(err: unknown): void {
+  console.error("[auth] sign-in failed:", err);
+  toast.error(readableError(err));
+}
+
 /** Start X sign-in, reporting anything that goes wrong. */
 export function connectX(callbackURL = "/"): void {
-  void signIn(X_PROVIDER_ID, { callbackURL }).catch((err: unknown) => {
-    toast.error(readableError(err));
-  });
+  void signIn(X_PROVIDER_ID, { callbackURL }).catch(report);
 }
 
 /** Start sign-in with any provider id, reporting anything that goes wrong. */
 export function connectProvider(providerId: string, callbackURL = "/"): void {
-  void signIn(providerId, { callbackURL }).catch((err: unknown) => {
-    toast.error(readableError(err));
-  });
+  void signIn(providerId, { callbackURL }).catch(report);
 }
