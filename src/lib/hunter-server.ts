@@ -241,9 +241,7 @@ async function loadState(
     avatarUrl: hunter.avatar_url,
     walletAddress: hunter.wallet_address,
     walletChain:
-      hunter.wallet_chain === "evm" || hunter.wallet_chain === "sol"
-        ? hunter.wallet_chain
-        : null,
+      hunter.wallet_chain === "evm" || hunter.wallet_chain === "sol" ? hunter.wallet_chain : null,
     xHandle: hunter.x_handle,
     xp,
     yapXp,
@@ -264,8 +262,7 @@ async function loadState(
 export const ensureHunter = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { displayName?: string | null; avatarUrl?: string | null }) => {
-    const displayName =
-      (input.displayName ?? "Hunter").trim().slice(0, 32) || "Hunter";
+    const displayName = (input.displayName ?? "Hunter").trim().slice(0, 32) || "Hunter";
     const raw = input.avatarUrl?.trim() ?? "";
     let avatarUrl: string | null = null;
     if (raw.startsWith("https://") || raw.startsWith("http://")) {
@@ -523,10 +520,7 @@ function toYapRow(row: {
     hasMention: Boolean(row.has_mention),
     isOriginal: Boolean(row.is_original),
     xpAwarded: asInt(row.xp_awarded),
-    createdAt:
-      typeof row.created_at === "string"
-        ? row.created_at
-        : row.created_at.toISOString(),
+    createdAt: typeof row.created_at === "string" ? row.created_at : row.created_at.toISOString(),
   };
 }
 
@@ -842,11 +836,7 @@ async function runScan(sql: SqlClient, extraHandles: readonly string[]): Promise
   `;
   const lastAt = prior[0]?.last_at;
   const lastMs =
-    lastAt instanceof Date
-      ? lastAt.getTime()
-      : lastAt
-        ? Date.parse(String(lastAt))
-        : 0;
+    lastAt instanceof Date ? lastAt.getTime() : lastAt ? Date.parse(String(lastAt)) : 0;
   if (lastMs && Date.now() - lastMs < SCAN_COOLDOWN_MS) {
     return {
       scanned: asInt(prior[0]?.found),
@@ -866,12 +856,19 @@ async function runScan(sql: SqlClient, extraHandles: readonly string[]): Promise
   const { collectPitTweets } = await import("@/lib/yap-fetch.server");
   const { tweets, source } = await collectPitTweets(handles);
 
+  // Which authors actually came back, so a feed full of posts nobody recognises
+  // can be traced to the handle that pulled them in. Handles are public.
+  const authors = [...new Set(tweets.map((t) => t.handle.toLowerCase()))];
+  console.info(
+    `[scan] source=${source} watching=${handles.length} kept=${tweets.length} ` +
+      `authors=${authors.slice(0, 20).join(",") || "none"}`,
+  );
+
   for (const tweet of tweets) {
     const url = `https://x.com/${tweet.handle}/status/${tweet.id}`;
     const hasTicker = tickerPattern().test(tweet.text);
     const hasMention =
-      mentionPattern(SOCIALS.xHandle).test(tweet.text) ||
-      sameHandle(tweet.handle, SOCIALS.xHandle);
+      mentionPattern(SOCIALS.xHandle).test(tweet.text) || sameHandle(tweet.handle, SOCIALS.xHandle);
     const postedAt = tweet.createdAt
       ? (() => {
           const d = new Date(tweet.createdAt);
@@ -900,16 +897,23 @@ async function runScan(sql: SqlClient, extraHandles: readonly string[]): Promise
   const bound = await sql<{ user_id: string; x_handle: string }>`
     select user_id, x_handle from hunters where x_handle is not null
   `;
-  const byHandle = new Map(
-    bound.map((row) => [row.x_handle.toLowerCase(), row.user_id]),
-  );
+  const byHandle = new Map(bound.map((row) => [row.x_handle.toLowerCase(), row.user_id]));
   let credited = 0;
+  let unbound = 0;
   for (const tweet of tweets) {
     const userId = byHandle.get(tweet.handle.toLowerCase());
-    if (!userId) continue;
+    if (!userId) {
+      // Stored in the public feed but credited to nobody — these are the posts
+      // that show up on the board without belonging to a hunter.
+      unbound += 1;
+      continue;
+    }
     const result = await creditTweet(sql, userId, tweet);
     if (result.ok) credited += 1;
   }
+  console.info(
+    `[scan] credited=${credited} unboundAuthors=${unbound} boundHunters=${bound.length}`,
+  );
 
   await sql`
     insert into pit_scan (id, last_at, source, found)
