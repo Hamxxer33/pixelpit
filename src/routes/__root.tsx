@@ -1,9 +1,5 @@
-import {
-  createRootRoute,
-  HeadContent,
-  Outlet,
-  Scripts,
-} from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { Analytics } from "@vercel/analytics/react";
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
@@ -81,6 +77,12 @@ function RootDocument() {
             toastOptions={{ className: "pixelpit-toast" }}
           />
         </AuthProvider>
+        {/* Vercel Web Analytics — page views only, no cookies and no
+            cross-site identifiers. Mounted at the root so it sees every route,
+            and outside AuthProvider because it has nothing to do with the
+            session. It no-ops off Vercel, so local dev stays quiet. Needs Web
+            Analytics enabled for the project in the Vercel dashboard. */}
+        <Analytics />
         <Scripts />
       </body>
     </html>
