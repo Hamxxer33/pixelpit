@@ -1,6 +1,7 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { GROK_PROVIDERS, authEnabled } from "@/lib/auth/client";
-import { connectProvider } from "@/lib/auth/connect";
+import { X_BROKER_PROVIDER_ID } from "@/lib/auth/providers";
+import { connectProvider, useConnectX } from "@/lib/auth/connect";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { PixelMark } from "@/components/pixel-art";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ export const Route = createFileRoute("/login")({ component: Login });
 
 function Login() {
   const { user, isPending } = useCurrentUserState();
+  const connectX = useConnectX();
 
   if (isPending) {
     return (
@@ -24,8 +26,10 @@ function Login() {
     return <Navigate to="/" />;
   }
 
-  const xProvider = GROK_PROVIDERS.find((p) => p.providerId === "grok-x");
-  const others = GROK_PROVIDERS.filter((p) => p.providerId !== "grok-x");
+  // X gets its own button below via `useConnectX`, which knows whether this
+  // deployment signs in with X directly or through the broker — so it is not
+  // looked up in `GROK_PROVIDERS` (the direct one is not listed there).
+  const others = GROK_PROVIDERS.filter((p) => p.providerId !== X_BROKER_PROVIDER_ID);
 
   return (
     <main className="grid min-h-[80dvh] place-items-center px-4 py-12">
@@ -39,16 +43,10 @@ function Login() {
         <div className="mt-6 flex flex-col gap-2">
           {authEnabled ? (
             <>
-              {xProvider ? (
-                <Button
-                  block
-                  size="lg"
-                  onClick={() => connectProvider(xProvider.providerId)}
-                >
-                  <XLogo />
-                  Continue with X
-                </Button>
-              ) : null}
+              <Button block size="lg" onClick={connectX}>
+                <XLogo />
+                Continue with X
+              </Button>
               {others.map((provider) => (
                 <Button
                   key={provider.providerId}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { connectX } from "@/lib/auth/connect";
+import { useConnectX } from "@/lib/auth/connect";
 import { PitWell } from "@/components/pixel-art";
 import { Button } from "@/components/ui/button";
 import { XLogo } from "@/components/brand-icons";
@@ -26,6 +26,7 @@ const SCORE_ROWS = [
 ] as const;
 
 export function Landing() {
+  const connectX = useConnectX();
   const windowId = usePitStore((s) => s.window);
   const setWindow = usePitStore((s) => s.setWindow);
   const [yappers7d, setYappers7d] = useState<YapperRow[]>([]);
@@ -68,7 +69,7 @@ export function Landing() {
             <Button
               size="lg"
               className="w-full sm:w-auto"
-              onClick={() => connectX()}
+              onClick={connectX}
             >
               <XLogo />
               Connect X
@@ -187,7 +188,7 @@ export function Landing() {
           <Button
             size="lg"
             className="w-full shrink-0 sm:w-auto"
-            onClick={() => connectX()}
+            onClick={connectX}
           >
             <XLogo />
             Connect X

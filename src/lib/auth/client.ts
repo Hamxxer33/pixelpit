@@ -1,7 +1,7 @@
 import { genericOAuthClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { runPreSignInSignOut, runSignOut } from "../../../scripts/sign-out-plan.mjs";
-import { GROK_PROVIDERS } from "./providers";
+import { GROK_PROVIDERS, isSocialProviderId } from "./providers";
 
 /**
  * Better Auth client for this React SPA (browser-side).
@@ -143,11 +143,16 @@ export async function signIn(
     return;
   }
 
-  const { data, error } = await authClient.signIn.oauth2({
-    providerId,
-    callbackURL,
-    errorCallbackURL,
-  });
+  // Two plugins, two call shapes: a provider that goes straight to its upstream
+  // is a Better Auth SOCIAL provider (`/api/auth/callback/<id>`), while the
+  // brokered ones are `genericOAuth` (`/api/auth/oauth2/callback/<id>`).
+  const { data, error } = isSocialProviderId(providerId)
+    ? await authClient.signIn.social({
+        provider: providerId as "twitter",
+        callbackURL,
+        errorCallbackURL,
+      })
+    : await authClient.signIn.oauth2({ providerId, callbackURL, errorCallbackURL });
   if (error) throw new Error(error.message ?? "Sign-in failed");
   if (data?.url) window.location.href = data.url;
 }

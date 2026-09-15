@@ -6,12 +6,15 @@
  * `void signIn(...)`, so a failure was swallowed and the button just looked
  * dead. Funnelling them through here means a failed connect always says
  * something.
+ *
+ * Which provider id backs X is a server-side decision (direct X when a client
+ * is configured, the Grok broker otherwise), so the hooks below read it from
+ * `AuthProvider` rather than hard-coding one.
  */
+import { useCallback } from "react";
 import { toast } from "sonner";
 import { signIn } from "./client";
-
-/** The provider id backing the X button (see `./providers`). */
-export const X_PROVIDER_ID = "grok-x";
+import { useXProviderId } from "./x-provider-context";
 
 /**
  * Turn a Better Auth / browser failure into something a visitor can act on.
@@ -22,6 +25,9 @@ function readableError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err ?? "");
   if (/invalid origin/i.test(message)) {
     return "Sign-in isn't configured for this domain yet.";
+  }
+  if (/invalid redirect uri/i.test(message)) {
+    return "Sign-in isn't set up for this domain yet.";
   }
   if (/pop-?up/i.test(message)) {
     return "Pop-up blocked — allow pop-ups for this site and try again.";
@@ -43,12 +49,18 @@ function report(err: unknown): void {
   toast.error(readableError(err));
 }
 
-/** Start X sign-in, reporting anything that goes wrong. */
-export function connectX(callbackURL = "/"): void {
-  void signIn(X_PROVIDER_ID, { callbackURL }).catch(report);
+/** Start sign-in with X, reporting anything that goes wrong. */
+export function useConnectX(callbackURL = "/"): () => void {
+  const providerId = useXProviderId();
+  return useCallback(() => {
+    void signIn(providerId, { callbackURL }).catch(report);
+  }, [providerId, callbackURL]);
 }
 
-/** Start sign-in with any provider id, reporting anything that goes wrong. */
+/**
+ * Start sign-in with an explicit provider id (the sign-in page, which lists
+ * every provider). For X prefer `useConnectX`, which resolves the id for you.
+ */
 export function connectProvider(providerId: string, callbackURL = "/"): void {
   void signIn(providerId, { callbackURL }).catch(report);
 }

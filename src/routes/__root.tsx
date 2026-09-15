@@ -13,14 +13,27 @@ import { PitMenu } from "@/components/pit-menu";
 import { APP_NAME, SOCIALS } from "@/lib/pixelpit";
 import appCss from "../styles.css?url";
 
-const fetchSessionUser = createServerFn({ method: "GET" }).handler(async () => {
-  const { getSessionUser } = await import("@/lib/auth/verify.server");
+/**
+ * One SSR round-trip for everything the shell needs from the server: who is
+ * signed in, and which provider id "Connect X" must use. The second can only be
+ * decided server-side (the X credentials are server-only) and has to be known
+ * before the button is clicked, so it rides along here rather than being
+ * fetched on demand — see `AuthProvider`.
+ */
+const fetchAuthBootstrap = createServerFn({ method: "GET" }).handler(async () => {
+  const [{ getSessionUser }, { activeXProviderId }] = await Promise.all([
+    import("@/lib/auth/verify.server"),
+    import("@/lib/auth/x-oauth.server"),
+  ]);
   const u = await getSessionUser();
-  return u ? { id: u.id, email: u.email } : null;
+  return {
+    sessionUser: u ? { id: u.id, email: u.email } : null,
+    xProviderId: activeXProviderId(),
+  };
 });
 
 export const Route = createRootRoute({
-  beforeLoad: async () => ({ sessionUser: await fetchSessionUser() }),
+  beforeLoad: async () => await fetchAuthBootstrap(),
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -54,7 +67,7 @@ export const Route = createRootRoute({
 });
 
 function RootDocument() {
-  const { sessionUser } = Route.useRouteContext();
+  const { sessionUser, xProviderId } = Route.useRouteContext();
   return (
     <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
@@ -62,7 +75,7 @@ function RootDocument() {
       </head>
       <body className="min-h-dvh bg-bg text-fg">
         <PreviewHostBridge />
-        <AuthProvider>
+        <AuthProvider xProviderId={xProviderId}>
           <div className="flex min-h-dvh flex-col">
             <SiteHeader sessionUser={sessionUser} />
             <PitMenu />
